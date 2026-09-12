@@ -1,3 +1,7 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import '../models/proxy_server.dart';
 import '../utils/logger.dart';
@@ -72,6 +76,158 @@ class ProxyProvider with ChangeNotifier {
   void selectServer(ProxyServer server) {
     _selectedServer = server;
     notifyListeners();
+  }
+
+  /// 从单条分享链接添加节点（Hysteria2 / VLESS）
+  /// 返回 true 表示添加成功
+  bool addServerFromLink(String link) {
+    final trimmed = link.trim();
+    if (trimmed.isEmpty) {
+      _errorMessage = '链接不能为空';
+      notifyListeners();
+      return false;
+    }
+
+    try {
+      final server = ProxyServer.fromLink(trimmed);
+      // 去重：同协议 + 同地址 + 同端口 + 同名 视为同一节点
+      final exists = _servers.any(
+        (s) =>
+            s.protocol == server.protocol &&
+            s.address == server.address &&
+            s.port == server.port &&
+            s.name == server.name,
+      );
+      if (exists) {
+        Logger.warning('节点已存在，跳过: ${server.name}');
+        return false;
+      }
+      _servers.add(server);
+      _selectedServer ??= server;
+      _errorMessage = '';
+      Logger.info('已添加节点: $server');
+      notifyListeners();
+      return true;
+    } catch (e) {
+      _errorMessage = '链接解析失败: $e';
+      Logger.error('解析链接失败: $e');
+      notifyListeners();
+      return false;
+    }
+  }
+
+  /// 从订阅地址导入节点。
+  /// 订阅内容支持：Base64 编码的链接集合，或明文按行分隔的链接。
+  /// 返回成功导入的节点数量。
+  Future<int> addServersFromSubscription(String url) async {
+    final trimmed = url.trim();
+    if (trimmed.isEmpty) {
+      _errorMessage = '订阅地址不能为空';
+      notifyListeners();
+      return 0;
+    }
+
+    _connectionStatus = '导入订阅中...';
+    notifyListeners();
+
+    try {
+      final client = HttpClient()
+        ..connectionTimeout = const Duration(seconds: 15);
+      final request = await client.getUrl(Uri.parse(trimmed));
+      final response = await request.close();
+
+      if (response.statusCode != 200) {
+        client.close();
+        _errorMessage = '订阅拉取失败: HTTP ${response.statusCode}';
+        _connectionStatus = '未连接';
+        notifyListeners();
+        return 0;
+      }
+
+      final body = await response.transform(utf8.decoder).join();
+      client.close();
+
+      final links = _extractLinksFromSubscription(body);
+      var added = 0;
+      for (final link in links) {
+        if (addServerFromLink(link)) added++;
+      }
+
+      _connectionStatus = _isConnected ? '已连接' : '未连接';
+      Logger.info('订阅导入完成，新增 $added 个节点');
+      notifyListeners();
+      return added;
+    } catch (e) {
+      _errorMessage = '订阅导入失败: $e';
+      _connectionStatus = '未连接';
+      Logger.error('订阅导入失败: $e');
+      notifyListeners();
+      return 0;
+    }
+  }
+
+  /// 解析订阅正文：优先尝试 Base64，失败则按明文处理
+  List<String> _extractLinksFromSubscription(String body) {
+    String content = body.trim();
+
+    // 尝试 Base64 解码（订阅常见做法）
+    try {
+      final normalized = content.replaceAll(RegExp(r'\s'), '');
+      final padded = normalized.padRight(
+          normalized.length + (4 - normalized.length % 4) % 4, '=');
+      if (padded.length % 4 == 0 &&
+          RegExp(r'^[A-Za-z0-9+/=]+$').hasMatch(padded)) {
+        final decoded = utf8.decode(base64.decode(padded));
+        if (decoded.contains('://')) {
+          content = decoded.trim();
+        }
+      }
+    } catch (_) {
+      // 不是 base64，保持原文
+    }
+
+    // URL-safe base64（带 - 和 _）
+    try {
+      if (!content.contains('://')) {
+        final normalized = content.replaceAll(RegExp(r'\s'), '');
+        final padded = normalized.padRight(
+            normalized.length + (4 - normalized.length % 4) % 4, '=');
+        final decoded = utf8.decode(base64Url.decode(padded));
+        if (decoded.contains('://')) content = decoded.trim();
+      }
+    } catch (_) {
+      // 忽略
+    }
+
+    return content
+        .split(RegExp(r'[\r\n]+'))
+        .map((e) => e.trim())
+        .where((e) =>
+            e.startsWith('hysteria2://') ||
+            e.startsWith('hy2://') ||
+            e.startsWith('vless://'))
+        .toList();
+  }
+
+  /// 删除一个节点
+  void removeServer(ProxyServer server) {
+    _servers.removeWhere((s) => s == server);
+    if (_selectedServer == server) {
+      _selectedServer = _servers.isNotEmpty ? _servers.first : null;
+    }
+    notifyListeners();
+  }
+
+  /// 按名称/协议关键字搜索节点
+  List<ProxyServer> searchServers(String keyword) {
+    final k = keyword.trim().toLowerCase();
+    if (k.isEmpty) return List.unmodifiable(_servers);
+    return _servers
+        .where((s) =>
+            s.name.toLowerCase().contains(k) ||
+            s.address.toLowerCase().contains(k) ||
+            s.protocol.toLowerCase().contains(k))
+        .toList();
   }
 
   Future<void> connect() async {
