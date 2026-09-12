@@ -1,0 +1,79 @@
+name: Build Flutter APK
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Setup Java
+      uses: actions/setup-java@v3
+      with:
+        distribution: 'temurin'
+        java-version: '17'
+    
+    - name: Setup Flutter
+      uses: subosito/flutter-action@v2
+      with:
+        flutter-version: '3.13.0'
+        channel: 'stable'
+        cache: true
+    
+    - name: Flutter doctor
+      run: flutter doctor
+    
+    - name: Get dependencies
+      run: flutter pub get
+    
+    - name: Build APK
+      run: flutter build apk --release --split-per-abi
+    
+    - name: Upload APK
+      uses: actions/upload-artifact@v3
+      with:
+        name: proxy-app-apk
+        path: build/app/outputs/flutter-apk/*.apk
+        retention-days: 30
+    
+    - name: Create Release
+      if: github.ref == 'refs/heads/main'
+      uses: softprops/action-gh-release@v1
+      with:
+        files: build/app/outputs/flutter-apk/*.apk
+        tag_name: v${{ github.run_number }}
+        name: Release v${{ github.run_number }}
+        body: |
+          ## Flutter Proxy App Release
+          
+          ### Features
+          - Built-in proxy nodes (Hysteria2 and VLESS protocols)
+          - One-click connect/disconnect
+          - Real-time speed monitoring
+          - Support for multiple countries: US, Australia, India, Brazil, France
+          
+          ### APK Variants
+          - `app-arm64-v8a-release.apk` - For 64-bit ARM devices
+          - `app-armeabi-v7a-release.apk` - For 32-bit ARM devices
+          - `app-x86_64-release.apk` - For 64-bit x86 devices
+          
+          ### Installation
+          1. Download the appropriate APK for your device
+          2. Install the APK (you may need to enable "Install from unknown sources")
+          3. Open the app and select a node
+          4. Tap the connect button
+          
+          ### Built-in Nodes
+          - **Hysteria2**: US (x2), Australia (x2), India (x2), Brazil (x2)
+          - **VLESS**: US (x2), India (x1), Australia (x2), France (x1)
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
