@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
+import 'package:provider/provider.dart' hide ProxyProvider;
 import 'package:flutter/services.dart';
 import '../providers/proxy_provider.dart';
 import '../widgets/connect_button.dart';
