@@ -1,23 +1,24 @@
 name: proxy_app
-description: A proxy application with built-in nodes for Hysteria2 and VLESS protocols.
+description: Proxy client with built-in Hysteria2 and VLESS nodes.
 version: 1.0.0+1
 publish_to: 'none'
 
 environment:
-  sdk: '>=3.0.0 <4.0.0'
+  sdk: '>=3.4.0 <4.0.0'
 
 dependencies:
   flutter:
     sdk: flutter
-  cupertino_icons: ^1.0.2
-  provider: ^6.0.0
-  animate_do: ^3.0.0
-  url_launcher: ^6.0.0
+  cupertino_icons: ^1.0.6
+  provider: ^6.1.1
+  flutter_vless: ^1.1.5
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^2.0.0
+  flutter_lints: ^5.0.0
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/qr_reward.png

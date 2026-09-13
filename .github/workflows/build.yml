@@ -6,9 +6,8 @@ on:
     paths:
       - 'lib/**'
       - 'pubspec.yaml'
+      - 'assets/**'
       - '.github/workflows/**'
-  pull_request:
-    branches: [ main ]
   workflow_dispatch:
 
 permissions:
@@ -18,7 +17,7 @@ jobs:
   build:
     name: Build Android APK
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -32,29 +31,51 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
+          flutter-version: '3.47.4'
           channel: 'stable'
           cache: true
 
       - name: Show environment
         run: flutter --version
 
-      # 仓库只提交了 lib/ 和 pubspec.yaml，没有 android 工程，
-      # 这里按需生成（不带 --overwrite，不会覆盖已有业务代码）
+      # 仓库只提交了 lib / assets / pubspec.yaml，没有 android 工程，按需生成
       - name: Generate Android platform project
         run: |
           flutter create . --project-name proxy_app --org com.eri --platforms android
-          # 双保险：若模板改动了业务代码，恢复为仓库版本
-          git checkout -- lib pubspec.yaml 2>/dev/null || true
-          test -d android && echo "android 工程已生成"
+          # 模板可能改写业务文件，恢复为仓库版本
+          git checkout -- lib pubspec.yaml assets 2>/dev/null || true
+          test -d android
+          echo "android 工程已生成"
+          ls android
 
-      - name: Add permissions and app label
+      - name: Configure Android (permissions / label / minSdk)
         run: |
-          sed -i 's|<application|<uses-permission android:name="android.permission.INTERNET"/><uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/><application|' android/app/src/main/AndroidManifest.xml
-          sed -i 's|android:label="proxy_app"|android:label="Proxy App"|' android/app/src/main/AndroidManifest.xml
-          grep -n 'INTERNET\|ACCESS_NETWORK_STATE\|android:label' android/app/src/main/AndroidManifest.xml || true
+          MANIFEST=android/app/src/main/AndroidManifest.xml
+          sed -i 's|<application|<uses-permission android:name="android.permission.INTERNET"/><uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/><uses-permission android:name="android.permission.CHANGE_NETWORK_STATE"/><uses-permission android:name="android.permission.FOREGROUND_SERVICE"/><uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE"/><uses-permission android:name="android.permission.POST_NOTIFICATIONS"/><application|' "$MANIFEST"
+          sed -i 's|android:label="proxy_app"|android:label="Proxy App"|' "$MANIFEST"
+          # flutter_vless 要求 minSdk >= 23
+          if [ -f android/app/build.gradle.kts ]; then
+            sed -i 's|minSdk = flutter.minSdkVersion|minSdk = 23|' android/app/build.gradle.kts
+            sed -i 's|minSdk = 21|minSdk = 23|' android/app/build.gradle.kts
+            sed -i 's|minSdk = 19|minSdk = 23|' android/app/build.gradle.kts
+          fi
+          if [ -f android/app/build.gradle ]; then
+            sed -i 's|minSdkVersion flutter.minSdkVersion|minSdkVersion 23|' android/app/build.gradle
+            sed -i 's|minSdkVersion 21|minSdkVersion 23|' android/app/build.gradle
+            sed -i 's|minSdkVersion 19|minSdkVersion 23|' android/app/build.gradle
+          fi
+          echo '=== manifest 权限 ==='
+          grep -o 'android.permission.[A-Z_]*' "$MANIFEST" | sort -u
+          echo '=== label ==='
+          grep -o 'android:label="[^"]*"' "$MANIFEST" | head -3
+          echo '=== minSdk ==='
+          grep -rn 'minSdk' android/app/build.gradle* || true
 
       - name: Get dependencies
         run: flutter pub get
+
+      - name: Analyze (non-blocking)
+        run: flutter analyze || true
 
       - name: Build APK
         run: flutter build apk --release --split-per-abi --obfuscate --split-debug-info=build/symbols
@@ -74,7 +95,8 @@ jobs:
           retention-days: 30
 
       - name: Create Release
-        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        if: github.ref == 'refs/heads/main'
+        continue-on-error: true
         uses: softprops/action-gh-release@v2
         with:
           files: build/app/outputs/flutter-apk/*.apk
@@ -83,10 +105,12 @@ jobs:
           body: |
             ## Proxy App 自动构建
 
+            Flutter 3.47.4 / Xray 内核（flutter_vless）
+
             ### APK 变体
-            - `app-arm64-v8a-release.apk` — 64 位 ARM 设备（多数现代手机）
-            - `app-armeabi-v7a-release.apk` — 32 位 ARM 设备（老机型）
-            - `app-x86_64-release.apk` — x86_64 设备（模拟器/部分平板）
+            - `app-arm64-v8a-release.apk` — 64 位 ARM（多数现代手机）
+            - `app-armeabi-v7a-release.apk` — 32 位 ARM（老机型）
+            - `app-x86_64-release.apk` — x86_64（模拟器/平板）
 
             已启用 `--obfuscate` 代码混淆。
           draft: false
