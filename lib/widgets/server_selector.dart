@@ -8,6 +8,7 @@ class ServerSelector extends StatelessWidget {
   final Function(ProxyServer) onServerSelected;
   final Map<String, int> delays;
   final Set<String> testing;
+  final void Function(ProxyServer)? onServerLongPress;
 
   const ServerSelector({
     super.key,
@@ -16,6 +17,7 @@ class ServerSelector extends StatelessWidget {
     required this.onServerSelected,
     this.delays = const {},
     this.testing = const {},
+    this.onServerLongPress,
   });
 
   @override
@@ -96,6 +98,9 @@ class ServerSelector extends StatelessWidget {
                   delay: delays[server.link],
                   testing: testing.contains(server.link),
                   onTap: () => onServerSelected(server),
+                  onLongPress: onServerLongPress == null
+                      ? null
+                      : () => onServerLongPress!(server),
                 );
               },
             ),
@@ -113,6 +118,7 @@ class _NodeTile extends StatelessWidget {
   final int? delay;
   final bool testing;
   final VoidCallback onTap;
+  final VoidCallback? onLongPress;
 
   const _NodeTile({
     required this.index,
@@ -121,10 +127,12 @@ class _NodeTile extends StatelessWidget {
     required this.onTap,
     this.delay,
     this.testing = false,
+    this.onLongPress,
   });
 
   Color _delayColor(ColorScheme scheme) {
     final d = delay ?? -1;
+    if (d == -2) return scheme.onSurfaceVariant;
     if (d < 0) return scheme.error;
     if (d < 120) return const Color(0xFF43A047);
     if (d < 300) return const Color(0xFFFFA726);
@@ -135,6 +143,7 @@ class _NodeTile extends StatelessWidget {
     if (testing) return '测试中';
     final d = delay;
     if (d == null) return '未测';
+    if (d == -2) return '忙碌';
     if (d < 0) return '超时';
     return '${d}ms';
   }
@@ -156,6 +165,7 @@ class _NodeTile extends StatelessWidget {
       ),
       child: InkWell(
         onTap: onTap,
+        onLongPress: onLongPress,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 260),
           color: selected

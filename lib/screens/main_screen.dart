@@ -26,22 +26,36 @@ class _MainScreenState extends State<MainScreen> {
     return PowerState.idle;
   }
 
+  bool _testingAll = false;
+
   Future<void> _testOne(ProxyProvider p, ProxyServer s) async {
-    if (_testing.contains(s.link)) return;
+    if (_testing.contains(s.link) || p.busy) {
+      if (p.busy && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('内核忙碌中，请稍候…')),
+        );
+      }
+      return;
+    }
     setState(() => _testing.add(s.link));
     final d = await p.testDelay(s);
     if (!mounted) return;
     setState(() {
       _testing.remove(s.link);
-      _delays[s.link] = d;
+      _delays[s.link] = d; // -1 超时 / -2 忙
     });
   }
 
   Future<void> _testAll(ProxyProvider p) async {
+    if (_testingAll) return;
+    setState(() => _testingAll = true);
+    // 串行测速：每次测速都会起/杀一个临时 Xray 进程，并发会互相冲突
     for (final s in p.servers) {
-      if (!mounted) return;
+      if (!mounted) break;
       await _testOne(p, s);
+      await Future.delayed(const Duration(milliseconds: 250));
     }
+    if (mounted) setState(() => _testingAll = false);
   }
 
   @override
@@ -79,9 +93,9 @@ class _MainScreenState extends State<MainScreen> {
         title: const Text('Proxy App'),
         actions: [
           IconButton(
-            tooltip: '测速全部节点',
+            tooltip: '测速全部节点（长按单个节点可单独测速）',
             onPressed: () => _testAll(proxy),
-            icon: const Icon(Icons.speed),
+            icon: Icon(_testingAll ? Icons.hourglass_top : Icons.speed),
           ),
         ],
       ),
@@ -148,7 +162,13 @@ class _MainScreenState extends State<MainScreen> {
                   testing: _testing,
                   onServerSelected: (s) {
                     HapticFeedback.lightImpact();
+                    // 仅切换节点。原先"选中即自动测速"会临时起/杀
+                    // Xray 进程，与随后的连接动作抢资源，导致按钮
+                    // 看起来"点了没反应"。测速改为手动触发。
                     proxy.selectServer(s);
+                  },
+                  onServerLongPress: (s) {
+                    HapticFeedback.mediumImpact();
                     _testOne(proxy, s);
                   },
                 ),
